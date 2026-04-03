@@ -15,6 +15,8 @@ Reality Substrate + Causal Computing Engine
 [![Tests](https://img.shields.io/badge/tests-273%20passing-brightgreen)](#running-tests)
 [![Python](https://img.shields.io/badge/python-3.8%2B-blue)](#quick-start)
 [![Research](https://img.shields.io/badge/paper-PAPER.md-purple)](PAPER.md)
+[![Model](https://img.shields.io/badge/formal%20model-MODEL.md-orange)](MODEL.md)
+[![Demo](https://img.shields.io/badge/demo-demo__viral.py-red)](#the-proof-of-power-demo)
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)](#)
 
 *Built by [Daniel Kimeu](https://github.com/dnlkilonzi-pixel)*
@@ -62,7 +64,7 @@ Traditional OS:            RS-CCE:
 | Graphs are data | **Graphs are the program** |
 | Static code | Self-modifying causal rules |
 | Single machine | Distributed causal consistency |
-| No formal model | **Formally specified** ([PAPER.md](PAPER.md)) |
+| No formal model | **Formally specified** ([PAPER.md](PAPER.md) + [MODEL.md](MODEL.md)) |
 
 ---
 
@@ -72,9 +74,45 @@ Traditional OS:            RS-CCE:
 git clone https://github.com/dnlkilonzi-pixel/Reality-Substrate-OS
 cd Reality-Substrate-OS
 pip install pytest
-python main.py             # full demonstration of all 9 capabilities
+python demo_viral.py      # THE demo — see below
+python main.py             # full walkthrough of all 9 capabilities
 python -m pytest tests/ -v # 273 tests, all passing
 ```
+
+---
+
+## The Proof-of-Power Demo
+
+> *One script. Six steps. Every invariant proven live.*
+
+```bash
+python demo_viral.py
+```
+
+What it shows in sequence:
+
+```
+STEP 1  Build initial causal graphs (edge server + cloud node)
+STEP 2  Edge detects CPU spike → graph fires → ΔG emitted (graph grows at runtime)
+STEP 3  Causal event propagates to cloud via vector clocks (happens-before proven)
+STEP 4  Cloud's graph evolves — it now has the injected rule too
+STEP 5  Deterministic replay: both timelines replayed and compared
+STEP 6  ProofEngine: every decision explained with full causal lineage
+─────────────────────────────────────────────────────
+ALL INVARIANTS VERIFIED  ✅ ✅ ✅ ✅ ✅
+```
+
+The output is designed to be screenshot-worthy.
+
+---
+
+## Key Documents
+
+| File | Purpose |
+|------|---------|
+| **[MODEL.md](MODEL.md)** | 🔒 The **locked formal model** — source of truth. Defines S, G, E, F, ⊕ and all 4 system invariants. When in doubt, read this first. |
+| **[PAPER.md](PAPER.md)** | 📄 The formal **system paper** — proofs of Determinism, Merge Commutativity, Merge Idempotency, and ProofEngine soundness. |
+| **[demo_viral.py](demo_viral.py)** | 🔥 The **proof-of-power demo** — self-evolving distributed causality in ~500 lines of Python. |
 
 ---
 
@@ -479,16 +517,32 @@ tests/test_distributed.py        — vector clocks, merge, conflict resolution
 
 ---
 
-## The Paper
+## The Research Package
 
-This project is accompanied by a formal academic paper:
+Three documents form the complete research package:
 
-> **[RS-CCE: A Formal Model for Causal, Self-Evolving Distributed Computation](PAPER.md)**
+### 🔒 [MODEL.md](MODEL.md) — The Locked Formal Model
+The single source of truth. Defines S, G, E, F, G⊕ΔG, activation predicate,
+and all **four system invariants**:
+- Causal Consistency
+- Deterministic Replay
+- Graph Monotonicity
+- Proof Completeness
+
+### 📄 [PAPER.md](PAPER.md) — The Formal System Paper
+> **RS-CCE: A Formal Model for Causal, Self-Evolving Distributed Computation**
 >
 > *Daniel Kimeu — Reality Substrate Project, 2026*
 >
 > Sections: Abstract · System Model · Transition Semantics ·
 > Distributed Consistency · Proof System · Evaluation · Related Work
+
+Includes proofs of Theorem 1 (Determinism), Theorem 2 (Merge Commutativity),
+and Theorem 3 (Merge Idempotency).
+
+### 🔥 [demo_viral.py](demo_viral.py) — The Proof of Power
+Runs a complete self-evolving distributed causality scenario and prints a
+screenshot-worthy terminal output proving all four invariants live.
 
 ---
 
