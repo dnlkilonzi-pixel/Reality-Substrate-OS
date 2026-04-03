@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from core.causal_engine import CausalGraph
 from core.event_bus import Event, EventBus
-from core.node_types import ActionNode, ConditionNode, EventNode, TransformNode
+from core.node_types import ActionNode, ConditionNode, EventNode, NodeState, TransformNode
 from dsl.compiler import DSLCompiler
 from dsl.parser import RuleParser
 from reality_layers.base_layer import BaseLayer, LayerStack
@@ -442,6 +442,175 @@ def upgrade3_demo() -> None:
 
 
 # ==========================================================================
+# Upgrade 4 — Formal Semantics
+# ==========================================================================
+
+def upgrade4_demo() -> None:
+    section("Upgrade 4: Formal Semantics  S(t+1) = F(S(t), G, E)")
+
+    from core.formal_semantics import CausalSemantics, GraphDelta
+    from core.causal_engine import CausalEdge
+
+    # --- 1. State Transition ---
+    print("\n  1. State Transition: S(t+1) = F(S(t), G, E)")
+    g = CausalGraph()
+    cond = ConditionNode("cpu > 80%", lambda ctx: ctx.get("cpu", 0) > 80)
+    act = ActionNode("throttle", lambda ctx: {"throttled": True})
+    g.add_node(cond).add_node(act)
+    g.add_edge(cond, act)
+
+    s0 = {"cpu": 90}
+    s1 = CausalSemantics.transition(s0, g)
+    print(f"     S(t)   = {s0}")
+    print(f"     S(t+1) = {s1}")
+    assert s1.get("throttled") is True
+    assert s0 == {"cpu": 90}  # original unchanged
+
+    # --- 2. Causal Activation ---
+    print("\n  2. Activation Predicate: activate(n) ⟺ dependency_satisfied(n, G, S)")
+    g2 = CausalGraph()
+    n1 = ActionNode("upstream", lambda ctx: None)
+    n2 = ActionNode("downstream", lambda ctx: None)
+    g2.add_node(n1).add_node(n2)
+    g2.add_edge(n1, n2)
+    print(f"     n1 (root) satisfied? {CausalSemantics.activation_satisfied(n1, g2, {})}")
+    print(f"     n2 before n1 DONE:   {CausalSemantics.activation_satisfied(n2, g2, {})}")
+    n1.state = NodeState.DONE
+    print(f"     n2 after  n1 DONE:   {CausalSemantics.activation_satisfied(n2, g2, {})}")
+
+    # --- 3. Graph Evolution ---
+    print("\n  3. Graph Evolution: G' = G ⊕ ΔG")
+    g3 = CausalGraph()
+    root = ActionNode("root", lambda ctx: None)
+    leaf = ActionNode("leaf", lambda ctx: None)
+    g3.add_node(root).add_node(leaf)
+    g3.add_edge(root, leaf)
+
+    new_node = ActionNode("extended", lambda ctx: None)
+    delta = GraphDelta(
+        nodes_added=[new_node],
+        edges_added=[CausalEdge(source_id=leaf.id, target_id=new_node.id)],
+    )
+    g_prime = CausalSemantics.evolve(g3, delta)
+    print(f"     Original G  : {g3}")
+    print(f"     Delta ΔG    : {delta}")
+    print(f"     Evolved G'  : {g_prime}")
+    assert len(g_prime.nodes) == 3
+    assert len(g3.nodes) == 2  # original unchanged
+
+    # --- 4. Causal Depth ---
+    print("\n  4. Causal Depth (longest path from root to node)")
+    chain = CausalGraph()
+    ns = [ActionNode(f"step_{i}", lambda ctx: None) for i in range(4)]
+    for n in ns:
+        chain.add_node(n)
+    for i in range(3):
+        chain.add_edge(ns[i], ns[i + 1])
+    for n in ns:
+        print(f"     depth({n.name}) = {CausalSemantics.causal_depth(n, chain)}")
+
+
+# ==========================================================================
+# Upgrade 5 — Execution Proof System
+# ==========================================================================
+
+def upgrade5_demo() -> None:
+    section("Upgrade 5: Execution Proof System (Git Blame for Computation)")
+
+    from tools.proof_engine import ProofEngine
+
+    g = CausalGraph(record_contexts=True)
+    cond = ConditionNode(
+        "IF cpu > 80%",
+        lambda ctx: ctx.get("cpu", 0) > 80,
+        metadata={"metric": "cpu"},
+    )
+    act1 = ActionNode("THEN throttle_cpu", lambda ctx: {"throttled": True})
+    act2 = ActionNode("CAUSE log_alert",   lambda ctx: {"logged": True})
+    g.add_node(cond).add_node(act1).add_node(act2)
+    g.add_edge(cond, act1, label="triggers")
+    g.add_edge(act1, act2, label="causes")
+
+    loop = ExecutionLoop(g, state_store=StateStore({"cpu": 90}), max_ticks=5)
+    engine = ProofEngine(g)
+    engine.attach(loop)
+    loop.start()
+
+    lineage = engine.get_lineage()
+    print(f"\n  {lineage}")
+    print()
+    print(lineage.format_lineage())
+
+    # Demonstrate why_fired
+    proof = lineage.why_fired(act2.id)
+    if proof:
+        print(f"\n  Deep dive — why did '{act2.name}' fire?")
+        print(proof.explain())
+
+    # Lineage graph (adjacency)
+    adj = lineage.lineage_graph()
+    print(f"\n  Lineage adjacency (cause → [effects]):")
+    for cause_id, effects in adj.items():
+        cause_name = g.get_node(cause_id).name if g.get_node(cause_id) else cause_id[:8]
+        effect_names = [
+            g.get_node(e).name if g.get_node(e) else e[:8] for e in effects
+        ]
+        print(f"    '{cause_name}' → {effect_names}")
+
+
+# ==========================================================================
+# Upgrade 6 — Distributed Causal Consistency
+# ==========================================================================
+
+def upgrade6_demo() -> None:
+    section("Upgrade 6: Distributed Causal Consistency (Distributed Reality Engine)")
+
+    from runtime.distributed_runtime import (
+        CausalNodeRuntime,
+        ConflictPolicy,
+        VectorClock,
+    )
+
+    print("\n  Scenario: Two RS-CCE nodes (edge server + cloud)")
+    edge = CausalNodeRuntime("edge", peers=["cloud"])
+    cloud = CausalNodeRuntime("cloud", peers=["edge"])
+
+    # Edge detects high CPU and emits an event
+    ev1 = edge.emit("cpu_spike", data={"value": 95},
+                    state_mutations={"throttle": True})
+    print(f"\n  edge  → {ev1}")
+
+    # Cloud receives the edge event (happens-before relationship established)
+    cloud.receive(ev1)
+    ev2 = cloud.emit("alert_ops", data={"level": "critical"})
+    print(f"  cloud → {ev2}")
+
+    # Verify causal ordering
+    print(f"\n  ev1 → ev2 (happens-before): {ev1.happens_before(ev2)}")
+    assert ev1.happens_before(ev2)
+
+    # Sync logs
+    merged = edge.sync(cloud.log)
+    ordered = merged.causal_order()
+    print(f"\n  Merged log ({len(merged)} events) in causal order:")
+    for i, ev in enumerate(ordered):
+        print(f"    [{i}] {ev.source_node:6} | {ev.event_type:15} | vc={ev.vector_clock}")
+
+    # Demonstrate conflict detection + resolution
+    print("\n  Conflict scenario: concurrent writes to same state key")
+    a = CausalNodeRuntime("A", peers=["B"])
+    b = CausalNodeRuntime("B", peers=["A"])
+    ev_a = a.emit("set_limit", state_mutations={"cpu_limit": 80})
+    ev_b = b.emit("set_limit", state_mutations={"cpu_limit": 90})
+    assert ev_a.concurrent_with(ev_b)
+
+    merged_conflict = a.log.merge(b.log, conflict_policy=ConflictPolicy.LAST_WRITER_WINS)
+    survivors = [e for e in merged_conflict.events if "cpu_limit" in e.state_mutations]
+    print(f"  Concurrent events: 2, after LAST_WRITER_WINS resolution: {len(survivors)}")
+    assert len(survivors) == 1
+
+
+# ==========================================================================
 # Entry point
 # ==========================================================================
 
@@ -456,5 +625,8 @@ if __name__ == "__main__":
     upgrade1_demo()
     upgrade2_demo()
     upgrade3_demo()
+    upgrade4_demo()
+    upgrade5_demo()
+    upgrade6_demo()
 
     print("\n✅ All demonstrations complete.")

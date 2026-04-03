@@ -43,7 +43,7 @@ class CausalGraph:
     replayed from an event log.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, record_contexts: bool = False) -> None:
         self._nodes: Dict[str, BaseNode] = {}
         self._edges: List[CausalEdge] = []
         # Adjacency: predecessor sets keyed by target node ID
@@ -52,6 +52,9 @@ class CausalGraph:
         self._successors: Dict[str, Set[str]] = {}
         # Execution history: list of (node_id, result) pairs
         self.execution_history: List[Dict[str, Any]] = []
+        # When True, each history entry also stores the context snapshot
+        # at the time the node executed (used by the proof engine)
+        self.record_contexts: bool = record_contexts
 
     # ------------------------------------------------------------------
     # Graph construction
@@ -176,11 +179,17 @@ class CausalGraph:
                 try:
                     result = node.execute(ctx)
                     ctx[node.id] = result
-                    self.execution_history.append({"node_id": node.id, "name": node.name, "result": result})
+                    entry: Dict[str, Any] = {"node_id": node.id, "name": node.name, "result": result}
+                    if self.record_contexts:
+                        entry["context"] = dict(ctx)
+                    self.execution_history.append(entry)
                     all_executed.append(node)
                 except RuntimeError:
                     # Node failed — record but keep going so independent branches run
-                    self.execution_history.append({"node_id": node.id, "name": node.name, "result": None, "error": True})
+                    entry = {"node_id": node.id, "name": node.name, "result": None, "error": True}
+                    if self.record_contexts:
+                        entry["context"] = dict(ctx)
+                    self.execution_history.append(entry)
 
         return all_executed
 
