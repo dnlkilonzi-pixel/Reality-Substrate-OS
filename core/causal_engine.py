@@ -184,6 +184,42 @@ class CausalGraph:
 
         return all_executed
 
+    def absorb(self, other: "CausalGraph", reset_nodes: bool = False) -> "CausalGraph":
+        """
+        Merge all nodes and edges from *other* into this graph.
+
+        After the merge every node that was in *other* is registered in
+        *self* with its existing ID, and all causal edges from *other*
+        are wired into *self*.  Node objects are *shared* (not copied),
+        so mutations to a node in the original graph are visible here and
+        vice-versa.
+
+        Parameters
+        ----------
+        other : CausalGraph
+            The graph whose nodes and edges to absorb.
+        reset_nodes : bool
+            When ``True``, reset every absorbed node to PENDING state
+            before merging.  Useful when composing graphs that have
+            already been executed.
+
+        Returns *self* for chaining.
+        """
+        for node in other.nodes:
+            if reset_nodes:
+                node.reset()
+            self._nodes[node.id] = node
+            self._predecessors.setdefault(node.id, set())
+            self._successors.setdefault(node.id, set())
+        for edge in other.edges:
+            # Avoid duplicate edges
+            existing = {(e.source_id, e.target_id) for e in self._edges}
+            if (edge.source_id, edge.target_id) not in existing:
+                self._edges.append(edge)
+                self._successors.setdefault(edge.source_id, set()).add(edge.target_id)
+                self._predecessors.setdefault(edge.target_id, set()).add(edge.source_id)
+        return self
+
     def reset(self) -> None:
         """Reset all nodes and clear execution history (for replay)."""
         for node in self._nodes.values():

@@ -16,10 +16,26 @@ Each *tick* of the loop:
 3. Builds a context snapshot from the state store.
 4. Calls :meth:`~core.causal_engine.CausalGraph.tick` to fire ready nodes.
 5. Applies node results back to the state store.
-6. Repeats until the graph is quiescent (no more ready nodes) or the
+6. Processes any self-modifying rule emissions (``__inject_rules__``).
+7. Repeats until the graph is quiescent (no more ready nodes) or the
    maximum tick count is reached.
 
 New rules can be injected at runtime via :meth:`inject_rule`.
+
+Self-Modifying Rules
+--------------------
+An :class:`~core.node_types.ActionNode` can emit new DSL rules by
+returning a dict that contains the key ``"__inject_rules__"``::
+
+    {"__inject_rules__": ["IF cpu_usage > 90% THEN spawn_optimizer()"]}
+
+The built-in ``add_rule`` action produces exactly this sentinel::
+
+    CAUSE add_rule("IF cpu_usage > 90% THEN spawn_optimizer()")
+
+The loop processes these emissions **after** the current tick completes,
+avoiding re-entrancy issues while still making the new rules available
+on the very next tick.
 """
 from __future__ import annotations
 
@@ -32,6 +48,29 @@ from core.node_types import EventNode, NodeState
 from reality_layers.base_layer import BaseLayer, LayerStack
 from runtime.graph_monitor import GraphMonitor
 from runtime.state_store import StateStore
+
+# Sentinel key used by self-modifying rule emissions
+_INJECT_RULES_KEY = "__inject_rules__"
+
+
+def _make_add_rule_action() -> Callable[[Dict[str, Any]], Dict[str, Any]]:
+    """
+    Return the built-in ``add_rule`` action callable.
+
+    When called as ``add_rule("IF x > 1 THEN do_thing()")`` from a
+    CAUSE clause it returns a sentinel dict that the execution loop
+    picks up and converts into a hot-injected DSL rule.
+
+    Both single-line format (``IF cond THEN action()``) and multi-line
+    format (newlines inside the string) are accepted.  Literal ``\\n``
+    escape sequences inside the string are converted to real newlines.
+    """
+    def add_rule(ctx: Dict[str, Any], *args: str) -> Dict[str, Any]:
+        rule_src = args[0].strip("\"'") if args else ""
+        # Convert literal \n escape sequences to real newlines
+        rule_src = rule_src.replace("\\n", "\n")
+        return {_INJECT_RULES_KEY: [rule_src]}
+    return add_rule
 
 
 class ExecutionLoop:
@@ -78,6 +117,10 @@ class ExecutionLoop:
         self._tick_count: int = 0
         self._running: bool = False
         self._on_tick_callbacks: List[Callable[["ExecutionLoop"], None]] = []
+        # Built-in action registry — always available to injected rules
+        self._builtin_registry: Dict[str, Callable[..., Any]] = {
+            "add_rule": _make_add_rule_action(),
+        }
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -110,13 +153,19 @@ class ExecutionLoop:
         """
         Parse and compile a DSL rule string and add it to the live graph.
 
+        The built-in ``add_rule`` action is always available in injected
+        rules.  The caller can supply additional actions via
+        *action_registry*, which takes precedence over built-ins.
+
         This supports hot-loading new behaviour without stopping the loop.
         """
         from dsl.parser import RuleParser
         from dsl.compiler import DSLCompiler
 
+        # Merge: built-ins are the base; caller overrides take precedence
+        merged = {**self._builtin_registry, **(action_registry or {})}
         parser = RuleParser()
-        compiler = DSLCompiler(action_registry=action_registry or {})
+        compiler = DSLCompiler(action_registry=merged)
         rules = parser.parse(source)
         compiler.compile(rules, graph=self.graph)
 
@@ -150,12 +199,22 @@ class ExecutionLoop:
         # 4. Execute one graph tick
         executed = self.graph.tick(ctx)
 
-        # 5. Write action results back to state store
+        # 5. Write action results back to state store; collect self-modifying rule emissions
+        pending_rules: List[str] = []
         for node in executed:
             if node.result is not None and isinstance(node.result, dict):
-                self.state.update(node.result)
+                if _INJECT_RULES_KEY in node.result:
+                    # Self-modifying rule emission — collect for post-tick injection
+                    pending_rules.extend(node.result[_INJECT_RULES_KEY])
+                else:
+                    self.state.update(node.result)
 
-        # 6. Invoke tick callbacks
+        # 6. Inject any new rules emitted this tick (safe: runs after graph tick)
+        for rule_src in pending_rules:
+            if rule_src.strip():
+                self.inject_rule(rule_src)
+
+        # 7. Invoke tick callbacks
         for cb in self._on_tick_callbacks:
             cb(self)
 

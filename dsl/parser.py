@@ -128,7 +128,7 @@ _CONDITION_RE = re.compile(
     re.IGNORECASE,
 )
 _ACTION_RE = re.compile(
-    r"^(?P<role>THEN|CAUSE)\s+(?P<func>\w+)\s*\((?P<args>[^)]*)\)\s*$",
+    r"^(?P<role>THEN|CAUSE)\s+(?P<func>\w+)\s*\((?P<args>.*)\)\s*$",
     re.IGNORECASE,
 )
 
@@ -160,6 +160,39 @@ def _split_rule_blocks(source: str) -> List[str]:
 
 class ParseError(ValueError):
     """Raised when a rule cannot be parsed."""
+
+
+# Normalise a single-line rule "IF cond THEN action() CAUSE action()" into
+# the canonical multi-line representation so that the rest of the parser
+# does not need to change.
+_SINGLE_LINE_SPLIT_RE = re.compile(
+    r"(?<!\w)(THEN|CAUSE)\s+",
+    re.IGNORECASE,
+)
+
+
+def _normalize_block(block: str) -> str:
+    """
+    If *block* is a single-line rule (all clauses on one line), split it
+    at ``THEN`` / ``CAUSE`` keywords so each clause occupies its own line.
+
+    Multi-line blocks pass through unchanged.
+    """
+    stripped = block.strip()
+    # Only normalise single-line blocks that start with IF
+    if "\n" in stripped or not re.match(r"^IF\s+", stripped, re.IGNORECASE):
+        return block
+    # Don't split if there's no THEN keyword (will fail later with a clear error)
+    if not re.search(r"\bTHEN\b", stripped, re.IGNORECASE):
+        return block
+    # Replace THEN/CAUSE keywords (preceded by word-boundary) with newline + keyword
+    normalised = re.sub(
+        r"\s+(THEN|CAUSE)\s+",
+        lambda m: f"\n{m.group(1).upper()} ",
+        stripped,
+        flags=re.IGNORECASE,
+    )
+    return normalised
 
 
 class RuleParser:
@@ -199,6 +232,7 @@ class RuleParser:
     # ------------------------------------------------------------------
 
     def _parse_block(self, block: str) -> RuleAST:
+        block = _normalize_block(block)
         lines = [l.strip() for l in block.splitlines() if l.strip()]
         if not lines:
             raise ParseError("Empty rule block")

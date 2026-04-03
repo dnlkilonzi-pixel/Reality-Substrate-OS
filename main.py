@@ -303,6 +303,145 @@ def end_to_end_demo() -> None:
 
 
 # ==========================================================================
+# Upgrade 1 — Causal Replay Engine
+# ==========================================================================
+
+def upgrade1_demo() -> None:
+    section("Upgrade 1: Causal Replay Engine (Deterministic Time Machine)")
+
+    RULES = """
+        IF cpu_usage > 80%
+        THEN log_event("high_cpu")
+        CAUSE reduce_process_priority()
+    """
+    log1: list = []
+    log2: list = []
+
+    def make_registry(log):
+        return {
+            "log_event":               lambda ctx, *a: log.append(("log", a)),
+            "reduce_process_priority": lambda ctx, *a: log.append(("reduce",)),
+        }
+
+    from runtime.causal_replay import CausalReplayEngine
+
+    # Original run
+    engine1 = CausalReplayEngine(RULES, action_registry=make_registry(log1))
+    loop1 = engine1.replay(initial_state={"cpu_usage": 90})
+    hist1 = [(e["name"],) for e in loop1.graph.execution_history]
+
+    # Replay run — must produce byte-identical history
+    engine2 = CausalReplayEngine(RULES, action_registry=make_registry(log2))
+    loop2 = engine2.replay(initial_state={"cpu_usage": 90})
+    hist2 = [(e["name"],) for e in loop2.graph.execution_history]
+
+    print(f"\n  Original execution history : {hist1}")
+    print(f"  Replay  execution history  : {hist2}")
+    print(f"  Histories identical?       : {hist1 == hist2}")
+    assert hist1 == hist2
+
+
+# ==========================================================================
+# Upgrade 2 — Cross-Graph Composition
+# ==========================================================================
+
+def upgrade2_demo() -> None:
+    section("Upgrade 2: Cross-Graph Composition (A ∘ B → Meta-Graph)")
+
+    from core.graph_composer import GraphBridge, GraphComposer
+
+    order: list = []
+
+    # Graph A: detect high CPU
+    ga = CausalGraph()
+    cond_a = ConditionNode("IF cpu_usage > 80%", lambda ctx: ctx.get("cpu_usage", 0) > 80)
+    act_a  = ActionNode("THEN throttle_cpu",     lambda ctx: order.append("A:throttle") or {"cpu_throttled": True})
+    ga.add_node(cond_a).add_node(act_a)
+    ga.add_edge(cond_a, act_a)
+
+    # Graph B: respond to throttle by alerting ops
+    gb = CausalGraph()
+    act_b = ActionNode("THEN alert_ops", lambda ctx: order.append("B:alert_ops"))
+    gb.add_node(act_b)
+
+    # Bridge: act_a → act_b
+    bridge = GraphBridge(source_node_id=act_a.id, target_node_id=act_b.id)
+    meta = GraphComposer.compose(ga, gb, bridges=[bridge])
+
+    print(f"\n  Graph A nodes : {len(ga.nodes)}")
+    print(f"  Graph B nodes : {len(gb.nodes)}")
+    print(f"  Meta-graph    : {meta}")
+
+    meta.tick({"cpu_usage": 90})
+    print(f"  Execution order: {order}")
+    assert order == ["A:throttle", "B:alert_ops"]
+
+    # Sequential composition (A ∘ B auto-bridge)
+    order2: list = []
+    ga2 = CausalGraph()
+    cond2 = ConditionNode("gate", lambda ctx: ctx.get("go", False))
+    leaf2 = ActionNode("step_A", lambda ctx: order2.append("A"))
+    ga2.add_node(cond2).add_node(leaf2)
+    ga2.add_edge(cond2, leaf2)
+
+    gb2 = CausalGraph()
+    act2 = ActionNode("step_B", lambda ctx: order2.append("B"))
+    gb2.add_node(act2)
+
+    meta2 = GraphComposer.compose_sequential(ga2, gb2)
+    meta2.tick({"go": True})
+    print(f"  Sequential A ∘ B order: {order2}")
+    assert order2.index("A") < order2.index("B")
+
+
+# ==========================================================================
+# Upgrade 3 — Self-Modifying Rules
+# ==========================================================================
+
+def upgrade3_demo() -> None:
+    section("Upgrade 3: Self-Modifying Rules (Adaptive Kernel)")
+
+    results: list = []
+
+    # The initial rule emits a new rule via add_rule(...)
+    initial_source = """
+        IF cpu_usage > 85%
+        THEN log_alert("cpu_critical")
+        CAUSE add_rule("IF cpu_usage > 90% THEN spawn_optimizer()")
+    """
+    registry = {
+        "log_alert":       lambda ctx, *a: results.append(f"ALERT:{a[0].strip(chr(34))}"),
+        "spawn_optimizer": lambda ctx, *a: results.append("OPTIMIZER_SPAWNED"),
+    }
+
+    from dsl.parser import RuleParser
+    from dsl.compiler import DSLCompiler
+
+    loop = ExecutionLoop(CausalGraph(), max_ticks=20)
+    loop._builtin_registry.update(registry)
+    merged = {**loop._builtin_registry}
+    rules = RuleParser().parse(initial_source)
+    DSLCompiler(action_registry=merged).compile(rules, graph=loop.graph)
+
+    print(f"\n  Initial graph: {loop.graph}")
+
+    loop.state.set("cpu_usage", 87)
+    loop.tick_once()
+    print(f"  After tick 1 (cpu=87): {results}")
+    print(f"  Graph after self-modification: {loop.graph}")
+
+    # The injected rule for cpu > 90% now exists
+    node_names = [n.name for n in loop.graph.nodes]
+    print(f"  Injected node names: {[n for n in node_names if 'optimizer' in n.lower() or '90' in n]}")
+
+    loop.graph.reset()
+    loop.state.set("cpu_usage", 95)
+    loop.tick_once()
+    print(f"  After tick 2 (cpu=95): {results}")
+    assert "OPTIMIZER_SPAWNED" in results
+
+
+# ==========================================================================
 # Entry point
 # ==========================================================================
 
@@ -314,5 +453,8 @@ if __name__ == "__main__":
     phase2_demo()
     phase3_demo()
     end_to_end_demo()
+    upgrade1_demo()
+    upgrade2_demo()
+    upgrade3_demo()
 
     print("\n✅ All demonstrations complete.")

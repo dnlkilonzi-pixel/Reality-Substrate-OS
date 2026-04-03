@@ -1,7 +1,8 @@
 """
 Core module for the Reality Substrate + Causal Computing Engine (RS-CCE).
 
-Contains the causal graph engine, event bus, and node type definitions.
+Contains the causal graph engine, event bus, node type definitions,
+and cross-graph composition utilities.
 """
 from .node_types import (
     NodeState,
@@ -13,6 +14,7 @@ from .node_types import (
 )
 from .causal_engine import CausalGraph, CausalEdge
 from .event_bus import EventBus, Event
+from .graph_composer import GraphBridge, GraphComposer
 
 __all__ = [
     "NodeState",
@@ -25,4 +27,6 @@ __all__ = [
     "CausalEdge",
     "EventBus",
     "Event",
+    "GraphBridge",
+    "GraphComposer",
 ]
